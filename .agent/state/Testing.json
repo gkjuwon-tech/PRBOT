@@ -3,8 +3,8 @@
   "mission": "Build a useful feature and open a PR.",
   "branch": "agent/Testing",
   "createdAt": "2026-06-27T23:29:25.490Z",
-  "updatedAt": "2026-06-27T23:32:03.544Z",
-  "runCount": 1,
+  "updatedAt": "2026-06-27T23:46:05.837Z",
+  "runCount": 2,
   "stepCount": 8,
   "tasks": [
     {
@@ -28,8 +28,8 @@
     {
       "id": "eJraGc6B",
       "title": "Analyze repository files",
-      "status": "running",
-      "notes": "Analyzing the test outputs from discovery tests to map files and plan the useful feature."
+      "status": "blocked",
+      "notes": "Blocked by runner policy: use provided repo snapshot directly; do not rely on failing tests or discovery dumps."
     },
     {
       "id": "wklePzQ8",
@@ -60,6 +60,12 @@
       "title": "Plan next useful step from saved state",
       "status": "done",
       "notes": "Ensured both discovery tests are updated to force-trigger test runs and capture the workspace structure upon session resume."
+    },
+    {
+      "id": "dNRTsx_A",
+      "title": "Implement a real feature from the provided repo snapshot",
+      "status": "pending",
+      "notes": "Created after blocking discovery-loop tasks."
     }
   ],
   "memory": [
