@@ -24,6 +24,15 @@ on:
         description: Paste the model access value from the app
         required: true
         type: string
+      job_id:
+        description: Stable job id for continuing a long task
+        required: false
+        type: string
+      max_steps:
+        description: Number of small steps to run now
+        required: false
+        default: '3'
+        type: string
 
 permissions:
   contents: write
@@ -49,3 +58,5 @@ jobs:
           MISSION: ${{ inputs.mission }}
           BASE_BRANCH: ${{ inputs.base_branch }}
           MODEL: ${{ inputs.model }}
+          JOB_ID: ${{ inputs.job_id }}
+          MAX_STEPS: ${{ inputs.max_steps }}
