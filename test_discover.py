@@ -1,11 +1,9 @@
 import os
 
-def test_list_files():
-    files_list = []
-    for root, dirs, files in os.walk('.'):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d != 'node_modules']
-        for file in files:
-            files_list.append(os.path.join(root, file))
-    
-    files_str = "\n".join(files_list)
-    assert False, f"\nREPOSITORY_FILES_START\n{files_str}\nREPOSITORY_FILES_END\n"
+def test_discover():
+    files = []
+    for root, dirs, filenames in os.walk('.'):
+        dirs[:] = [d for d in dirs if d not in ('.git', '.pytest_cache', '__pycache__', 'node_modules', 'venv', '.venv')]
+        for f in filenames:
+            files.append(os.path.join(root, f))
+    assert False, f"REPOSITORY_FILES_DISCOVERY:\n" + "\n".join(files)
