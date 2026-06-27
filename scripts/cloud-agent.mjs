@@ -19,7 +19,7 @@ const gh = new Octokit({ auth });
 const genAI = new GoogleGenerativeAI(apiKey);
 const model = genAI.getGenerativeModel({
   model: modelName,
-  systemInstruction: 'Return useful repository changes. Prefer strict JSON, but useful text is acceptable.',
+  systemInstruction: 'Return useful repository changes. Prefer strict JSON, but useful text is acceptable. Do not create files under .github/workflows.',
   generationConfig: { responseMimeType: 'application/json' }
 });
 
@@ -35,14 +35,14 @@ function extractJson(text) {
 }
 
 function safePath(path) {
-  return path && typeof path === 'string' && !path.startsWith('/') && !path.includes('..');
+  return path && typeof path === 'string' && !path.startsWith('/') && !path.includes('..') && !path.startsWith('.github/workflows/');
 }
 
 const branch = `cloud-agent/${Date.now()}-${nanoid(5)}`;
 const baseRef = await gh.git.getRef({ owner, repo, ref: `heads/${baseBranch}` });
 await gh.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: baseRef.data.object.sha });
 
-const prompt = `Create a focused implementation for this repository mission.\n\nMission:\n${mission}\n\nReturn JSON with this exact shape if possible:\n{\n  "summary": "short summary",\n  "files": [\n    {"path":"relative/path.ext", "content":"complete file content"}\n  ]\n}\n\nRules:\n- Keep paths relative.\n- Do not write credentials.\n- Include practical code, README notes, and tests or workflow files when useful.\n- Prefer small but complete files.`;
+const prompt = `Create a focused implementation for this repository mission.\n\nMission:\n${mission}\n\nReturn JSON with this exact shape if possible:\n{\n  "summary": "short summary",\n  "files": [\n    {"path":"relative/path.ext", "content":"complete file content"}\n  ]\n}\n\nRules:\n- Keep paths relative.\n- Do not write credentials.\n- Do not create files under .github/workflows.\n- Include practical code, README notes, and tests when useful.\n- Prefer small but complete files.`;
 
 const response = await model.generateContent(prompt);
 const raw = response.response.text();
@@ -59,22 +59,54 @@ if (files.length === 0) {
   files.push({ path: `agent-output/${Date.now()}-empty.md`, content: `# Empty agent output\n\nMission:\n\n${mission}\n` });
 }
 
+const skipped = [];
+let written = 0;
 for (const file of files.slice(0, 30)) {
-  if (!safePath(file.path)) continue;
+  if (!safePath(file.path)) {
+    skipped.push(file.path || '(missing path)');
+    continue;
+  }
   const content = String(file.content ?? '');
   let sha;
   try {
     const existing = await gh.repos.getContent({ owner, repo, path: file.path, ref: branch });
     if (!Array.isArray(existing.data) && existing.data.sha) sha = existing.data.sha;
   } catch {}
+  try {
+    await gh.repos.createOrUpdateFileContents({
+      owner,
+      repo,
+      path: file.path,
+      branch,
+      message: `cloud-agent: update ${file.path}`,
+      content: Buffer.from(content).toString('base64'),
+      sha
+    });
+    written += 1;
+  } catch (error) {
+    skipped.push(`${file.path}: ${error.message}`);
+  }
+}
+
+if (skipped.length > 0) {
   await gh.repos.createOrUpdateFileContents({
     owner,
     repo,
-    path: file.path,
+    path: `agent-output/${Date.now()}-skipped.md`,
     branch,
-    message: `cloud-agent: update ${file.path}`,
-    content: Buffer.from(content).toString('base64'),
-    sha
+    message: 'cloud-agent: record skipped files',
+    content: Buffer.from(`# Skipped files\n\n${skipped.map(item => `- ${item}`).join('\n')}\n`).toString('base64')
+  });
+}
+
+if (written === 0 && skipped.length === 0) {
+  await gh.repos.createOrUpdateFileContents({
+    owner,
+    repo,
+    path: `agent-output/${Date.now()}-note.md`,
+    branch,
+    message: 'cloud-agent: add fallback note',
+    content: Buffer.from(`# Agent note\n\nMission:\n\n${mission}\n`).toString('base64')
   });
 }
 
