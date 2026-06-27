@@ -1,0 +1,32 @@
+name: web-gh-pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@9.12.0 --activate
+      - run: pnpm install --frozen-lockfile=false
+      - run: pnpm --filter @hn-pr-worker/web build
+      - name: Push built app to gh-pages branch
+        run: |
+          cd apps/web/dist
+          git init
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add -A
+          git commit -m publish-web-app
+          git branch -M gh-pages
+          git push -f https://x-access-token:${{ github.token }}@github.com/${{ github.repository }} gh-pages
