@@ -1,14 +1,12 @@
 import os
-import json
 
 def test_discover_files():
-    files_list = []
+    found = []
     for root, dirs, files in os.walk('.'):
-        # Ignore common directories to keep output clean and focused
-        dirs[:] = [d for d in dirs if d not in ('.git', '.pytest_cache', '__pycache__', 'node_modules', 'venv', '.venv', '.env')]
-        for file in files:
-            path = os.path.join(root, file)
-            files_list.append(path)
+        if any(ignored in root for ignored in ['.git', '__pycache__', 'node_modules', '.pytest_cache', '.venv', 'env']):
+            continue
+        for f in files:
+            full_path = os.path.join(root, f)
+            found.append(full_path)
     
-    # Fail with the file list in the message to ensure it is captured in stdout/stderr
-    assert False, f"DISCOVERED_FILES_START\n{json.dumps(files_list, indent=2)}\nDISCOVERED_FILES_END"
+    assert False, "DISCOVERED_FILES:\n" + "\n".join(found)
