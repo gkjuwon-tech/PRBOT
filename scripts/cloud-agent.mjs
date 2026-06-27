@@ -7,7 +7,7 @@ const auth = process.env.GH_AUTH;
 const repoFull = process.env.GH_REPO;
 const mission = process.env.MISSION;
 const baseBranch = process.env.BASE_BRANCH || 'main';
-const modelName = process.env.MODEL || 'gemini-3.5-flash';
+const requestedModelName = (process.env.MODEL || 'gemini-3.1-pro-preview').trim();
 const jobId = (process.env.JOB_ID || '').trim() || `job-${Date.now()}`;
 const maxSteps = Math.max(1, Math.min(Number(process.env.MAX_STEPS || 1), 8));
 
@@ -19,15 +19,24 @@ if (!mission) throw new Error('Missing mission');
 const [owner, repo] = repoFull.split('/');
 const gh = new Octokit({ auth });
 const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({
-  model: modelName,
+const modelConfig = {
   systemInstruction: 'You are a careful repository automation agent. Return strict JSON. If a proposed file path is rejected by validation, revise the plan and choose an allowed path. Maintain continuity from provided state and memory.',
   generationConfig: { responseMimeType: 'application/json' }
-});
+};
 
 function b64(text) { return Buffer.from(text).toString('base64'); }
 function fromB64(text) { return Buffer.from(text || '', 'base64').toString('utf8'); }
 function stamp() { return new Date().toISOString(); }
+function normalizeModelName(name) {
+  if (name === 'gemini-3.1-pro') return 'gemini-3.1-pro-preview';
+  return name;
+}
+function modelCandidates(name) {
+  const first = normalizeModelName(name);
+  const list = [first];
+  if (first !== 'gemini-3.1-pro-preview') list.push('gemini-3.1-pro-preview');
+  return [...new Set(list)];
+}
 function extractJson(text) {
   const cleaned = text.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
   try { return JSON.parse(cleaned); } catch {}
@@ -38,7 +47,6 @@ function extractJson(text) {
   }
   return null;
 }
-
 function pathFailure(path) {
   if (!path || typeof path !== 'string') return 'missing path';
   if (path.startsWith('/')) return 'absolute paths are not allowed';
@@ -46,33 +54,46 @@ function pathFailure(path) {
   if (path.startsWith('.github/workflows/')) return 'reserved automation config path is not allowed here; write a normal source, test, or docs file instead';
   return null;
 }
-
 function score(text, query) {
   const hay = String(text || '').toLowerCase();
   return String(query || '').toLowerCase().split(/\W+/).filter(Boolean).reduce((sum, term) => sum + (hay.includes(term) ? 1 : 0), 0);
 }
-
 function toPlan(text, label) {
   return extractJson(text) ?? {
     summary: `${label}: captured non-JSON model output as a note.`,
     files: [{ path: `agent-output/${Date.now()}-plan.md`, content: `# Agent output\n\nMission:\n\n${mission}\n\n## Model response\n\n${text}\n` }]
   };
 }
-
 async function askModel(prompt) {
-  const response = await model.generateContent(prompt);
-  return response.response.text();
+  let lastError;
+  for (const name of modelCandidates(requestedModelName)) {
+    try {
+      console.log(`Using model: ${name}`);
+      const model = genAI.getGenerativeModel({ model: name, ...modelConfig });
+      const response = await model.generateContent(prompt);
+      return response.response.text();
+    } catch (error) {
+      lastError = error;
+      console.log(`Model attempt failed for ${name}: ${error.message}`);
+      if (!String(error.message || '').includes('not found') && error.status !== 404) throw error;
+    }
+  }
+  throw lastError;
 }
 
 const branch = `agent/${jobId}`;
 const statePath = `.agent/state/${jobId}.json`;
 const logPath = `.agent/logs/${jobId}.md`;
+let createdBranch = false;
 
 try {
   await gh.git.getRef({ owner, repo, ref: `heads/${branch}` });
+  console.log(`Continuing existing job branch: ${branch}`);
 } catch {
   const baseRef = await gh.git.getRef({ owner, repo, ref: `heads/${baseBranch}` });
   await gh.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: baseRef.data.object.sha });
+  createdBranch = true;
+  console.log(`Initialized new job branch: ${branch}`);
 }
 
 async function readFile(path) {
@@ -82,7 +103,6 @@ async function readFile(path) {
   } catch {}
   return { text: '', sha: undefined };
 }
-
 async function writeFile(path, text, message) {
   let sha;
   try {
@@ -91,7 +111,6 @@ async function writeFile(path, text, message) {
   } catch {}
   await gh.repos.createOrUpdateFileContents({ owner, repo, path, branch, message, content: b64(text), sha });
 }
-
 function freshState() {
   return {
     jobId,
@@ -116,6 +135,7 @@ function freshState() {
 const oldState = await readFile(statePath);
 let state;
 try { state = oldState.text ? { ...freshState(), ...JSON.parse(oldState.text) } : freshState(); } catch { state = freshState(); }
+if (createdBranch && !oldState.text) state.memory.push({ at: stamp(), kind: 'init', text: `New job registered: ${jobId} on ${branch}` });
 state.runCount += 1;
 state.updatedAt = stamp();
 
@@ -142,7 +162,8 @@ async function appendLog(text) {
   await writeFile(logPath, `${old.text}\n\n## ${stamp()}\n\n${text}\n`, 'agent: append long task log');
 }
 
-await appendLog(`Run ${state.runCount} started. jobId=${jobId}, maxSteps=${maxSteps}`);
+await saveState();
+await appendLog(`${createdBranch ? 'New job initialized' : 'Existing job resumed'}. Run ${state.runCount} started. jobId=${jobId}, maxSteps=${maxSteps}, model=${normalizeModelName(requestedModelName)}`);
 
 for (let step = 0; step < maxSteps; step++) {
   const task = nextTask();
