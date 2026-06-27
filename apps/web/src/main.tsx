@@ -1,4 +1,98 @@
-import React,{useEffect,useState}from'react';import{createRoot}from'react-dom/client';import'./style.css';
-const API=import.meta.env.VITE_API_URL??'http://localhost:8787/api';
-function App(){const[jobs,setJobs]=useState<any[]>([]),[active,setActive]=useState<any>(null),[busy,setBusy]=useState(false);const[form,setForm]=useState({credential:'',repoFullName:'gkjuwon-tech/PRBOT',baseBranch:'main',modelMode:'auto',maxHours:12,mission:'Build a useful feature and open a draft PR.'});async function refresh(){const list=await fetch(`${API}/jobs`).then(r=>r.json()).catch(()=>[]);setJobs(list);if(active)setActive(await fetch(`${API}/jobs/${active.id}`).then(r=>r.json()))}useEffect(()=>{refresh();const t=setInterval(refresh,3000);return()=>clearInterval(t)},[active?.id]);async function submit(e:any){e.preventDefault();setBusy(true);try{const j=await fetch(`${API}/jobs`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...form,maxHours:Number(form.maxHours)})}).then(r=>r.json());setActive(j);await refresh()}finally{setBusy(false)}}return <main><header><b>HN PR Worker</b><span>new | jobs | memory | submit</span></header><section className="layout"><aside><h1>Submit mission</h1><p>Autonomous GitHub PR goblin in a Hacker News raincoat.</p><form onSubmit={submit}><label>GitHub credential<input type="password" value={form.credential} onChange={e=>setForm({...form,credential:e.target.value})}/></label><label>Repo<input value={form.repoFullName} onChange={e=>setForm({...form,repoFullName:e.target.value})}/></label><label>Base<input value={form.baseBranch} onChange={e=>setForm({...form,baseBranch:e.target.value})}/></label><label>Model<select value={form.modelMode} onChange={e=>setForm({...form,modelMode:e.target.value})}><option value="auto">auto</option><option value="fast">flash</option><option value="pro">pro</option></select></label><label>Hours<input type="number" value={form.maxHours} onChange={e=>setForm({...form,maxHours:Number(e.target.value)})}/></label><label>Mission<textarea value={form.mission} onChange={e=>setForm({...form,mission:e.target.value})}/></label><button disabled={busy}>{busy?'summoning...':'submit'}</button></form></aside><section><h1>Jobs</h1><ol>{jobs.map((j,i)=><li key={j.id}><span>{i+1}. </span><button className="link" onClick={async()=>setActive(await fetch(`${API}/jobs/${j.id}`).then(r=>r.json()))}>{j.mission}</button> <small>{j.status} {j.pullRequestUrl&&<a href={j.pullRequestUrl}>PR</a>}</small></li>)}</ol>{active&&<article className="panel"><h2>{active.mission}</h2><p>{active.status} · {active.repoFullName} · {active.branchName}</p>{active.error&&<pre>{active.error}</pre>}<h3>Tasks</h3><ul>{active.tasks?.map((t:any)=><li key={t.id}>{t.status} — {t.title}</li>)}</ul><h3>Timeline</h3>{active.logs?.map((l:any)=><p key={l.id}><b>{l.role}</b> {l.content}</p>)}</article>}</section></section></main>}
-createRoot(document.getElementById('root')!).render(<App/>);
+import React, { useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import './style.css';
+
+type FormState = {
+  token: string;
+  repo: string;
+  branch: string;
+  model: string;
+  mission: string;
+};
+
+function parseRepo(value: string) {
+  const cleaned = value.trim().replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '');
+  const [owner, repo] = cleaned.split('/');
+  if (!owner || !repo) throw new Error('Repo must look like owner/name');
+  return { owner, repo };
+}
+
+function App() {
+  const [form, setForm] = useState<FormState>({
+    token: '',
+    repo: 'gkjuwon-tech/PRBOT',
+    branch: 'main',
+    model: 'gemini-3.5-flash',
+    mission: 'Build a useful feature and open a PR.'
+  });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('ready. feed me a mission.');
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('calling GitHub Actions... little orange goblin is putting on boots.');
+    try {
+      const { owner, repo } = parseRepo(form.repo);
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/workflows/cloud-agent.yml/dispatches`, {
+        method: 'POST',
+        headers: {
+          accept: 'application/vnd.github+json',
+          authorization: `Bearer ${form.token}`,
+          'x-github-api-version': '2022-11-28',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          ref: form.branch,
+          inputs: {
+            mission: form.mission,
+            base_branch: form.branch,
+            model: form.model
+          }
+        })
+      });
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+      setMessage(`workflow started. open https://github.com/${owner}/${repo}/actions/workflows/cloud-agent.yml`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main>
+      <header><b>HN Cloud PR Agent</b><span>new | run | workflows | prs | complain loudly</span></header>
+      <section className="layout">
+        <aside>
+          <h1>Run from phone</h1>
+          <p>This is the app. No laptop. No local server. Your phone is the remote control, GitHub Actions is the worker goblin.</p>
+          <form onSubmit={submit}>
+            <label>GitHub token for dispatch only<input type="password" value={form.token} onChange={e => setForm({ ...form, token: e.target.value })} placeholder="fine-grained token with Actions: write" /></label>
+            <label>Repo<input value={form.repo} onChange={e => setForm({ ...form, repo: e.target.value })} /></label>
+            <label>Base branch<input value={form.branch} onChange={e => setForm({ ...form, branch: e.target.value })} /></label>
+            <label>Gemini model<select value={form.model} onChange={e => setForm({ ...form, model: e.target.value })}><option>gemini-3.5-flash</option><option>gemini-3.1-pro</option></select></label>
+            <label>Mission<textarea value={form.mission} onChange={e => setForm({ ...form, mission: e.target.value })} /></label>
+            <button disabled={busy || !form.token || !form.mission}>{busy ? 'summoning...' : 'run cloud agent'}</button>
+          </form>
+        </aside>
+        <section>
+          <h1>Status</h1>
+          <article className="panel"><p>{message}</p></article>
+          <article className="panel">
+            <h2>What this UI does</h2>
+            <ol>
+              <li>Calls GitHub's workflow dispatch API directly from your browser.</li>
+              <li>Starts <code>cloud-agent.yml</code> in GitHub Actions.</li>
+              <li>The workflow calls Gemini in the cloud.</li>
+              <li>The workflow creates a branch, commits files, and opens a PR.</li>
+            </ol>
+            <p>Your token is not sent to my server. There is no server. It goes from this page to GitHub's API.</p>
+          </article>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+createRoot(document.getElementById('root')!).render(<App />);
