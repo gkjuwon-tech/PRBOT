@@ -1,24 +1,25 @@
 const fs = require('fs');
 const path = require('path');
 
-function walk(dir) {
-  let results = [];
-  const list = fs.readdirSync(dir);
-  list.forEach((file) => {
+function getFiles(dir, allFiles = []) {
+  const files = fs.readdirSync(dir);
+  for (const file of files) {
     const filePath = path.join(dir, file);
-    const stat = fs.statSync(filePath);
-    if (stat && stat.isDirectory()) {
-      if (!['.git', 'node_modules', '.pytest_cache', '__pycache__', 'venv', '.venv', '.env'].includes(file)) {
-        results = results.concat(walk(filePath));
-      }
-    } else {
-      results.push(filePath);
+    if (filePath.includes('.git') || filePath.includes('node_modules') || filePath.includes('__pycache__') || filePath.includes('.pytest_cache')) {
+      continue;
     }
-  });
-  return results;
+    if (fs.statSync(filePath).isDirectory()) {
+      getFiles(filePath, allFiles);
+    } else {
+      allFiles.push(filePath);
+    }
+  }
+  return allFiles;
 }
 
-test('discover files', () => {
-  const files = walk('.');
-  throw new Error(`DISCOVERED_FILES_START\n${JSON.stringify(files, null, 2)}\nDISCOVERED_FILES_END`);
+describe('Discovery', () => {
+  it('should list all files', () => {
+    const files = getFiles('.');
+    throw new Error("DISCOVERED_FILES:\n" + files.join('\n'));
+  });
 });
