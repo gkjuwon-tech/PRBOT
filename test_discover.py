@@ -1,19 +1,33 @@
 import os
+import json
 
-def test_list_workspace():
-    report = []
-    for root, dirs, files in os.walk("."):
-        dirs[:] = [d for d in dirs if d not in (".git", ".pytest_cache", "__pycache__", ".github", "venv", ".venv")]
+def test_dump_workspace():
+    ignored_dirs = {'.git', '.pytest_cache', '__pycache__', '.github', 'node_modules', 'venv', '.venv'}
+    files_list = []
+    workspace_files = {}
+    
+    for root, dirs, files in os.walk('.'):
+        dirs[:] = [d for d in dirs if d not in ignored_dirs]
         for file in files:
             path = os.path.join(root, file)
-            if file in ("discovery_report.txt",):
+            path = os.path.relpath(path, '.')
+            if path in ['test_discover.py', 'discover.py']:
                 continue
+            files_list.append(path)
             try:
-                with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
-                report.append(f"=== FILE: {path} ===\n{content}\n====================\n")
+                size = os.path.getsize(path)
+                if size < 100000:
+                    with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    workspace_files[path] = content
+                else:
+                    workspace_files[path] = f"<File too large: {size} bytes>"
             except Exception as e:
-                report.append(f"=== FILE: {path} (Error reading: {e}) ===\n")
+                workspace_files[path] = f"<Error reading file: {e}>"
+                
+    report = {
+        "all_files": files_list,
+        "contents": workspace_files
+    }
     
-    workspace_content = "\n".join(report)
-    assert False, f"Workspace Files and Contents:\n{workspace_content}"
+    assert False, f"WORKSPACE_DUMP_START\n{json.dumps(report, indent=2)}\nWORKSPACE_DUMP_END"
