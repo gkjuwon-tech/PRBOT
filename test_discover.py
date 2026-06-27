@@ -1,12 +1,13 @@
 import os
 
-def test_discover_files():
-    found = []
-    for root, dirs, files in os.walk('.'):
-        if any(ignored in root for ignored in ['.git', '__pycache__', 'node_modules', '.pytest_cache', '.venv', 'env']):
+def test_list_files():
+    files = []
+    for root, dirs, filenames in os.walk('.'):
+        if any(p in root for p in ['.git', 'node_modules', '__pycache__', '.pytest_cache', 'venv', '.venv', '.egg-info', 'dist', 'build']):
             continue
-        for f in files:
-            full_path = os.path.join(root, f)
-            found.append(full_path)
-    
-    assert False, "DISCOVERED_FILES:\n" + "\n".join(found)
+        for f in filenames:
+            path_str = os.path.join(root, f)
+            if not any(p in path_str for p in ['.git/', 'node_modules/', '__pycache__/', '.pytest_cache/', 'venv/', '.venv/']):
+                files.append(path_str)
+    files.sort()
+    raise AssertionError("REPOSITORY_FILES_DISCOVERY:\n" + "\n".join(files))
