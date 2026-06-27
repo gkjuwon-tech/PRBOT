@@ -1,0 +1,39 @@
+{
+  "jobId": "build-a-useful-feature-and-open-a-pr",
+  "mission": "Build a useful feature and open a PR.",
+  "branch": "agent/build-a-useful-feature-and-open-a-pr",
+  "createdAt": "2026-06-27T23:36:53.275Z",
+  "updatedAt": "2026-06-27T23:36:53.276Z",
+  "runCount": 1,
+  "stepCount": 0,
+  "tasks": [
+    {
+      "id": "Sfl-UtBO",
+      "title": "Understand mission and repo context",
+      "status": "pending",
+      "notes": ""
+    },
+    {
+      "id": "A0FvGW37",
+      "title": "Ship a small useful implementation slice",
+      "status": "pending",
+      "notes": ""
+    },
+    {
+      "id": "UAmgyykX",
+      "title": "Record progress and create next tasks",
+      "status": "pending",
+      "notes": ""
+    }
+  ],
+  "memory": [
+    {
+      "at": "2026-06-27T23:36:53.276Z",
+      "kind": "init",
+      "text": "New job registered: build-a-useful-feature-and-open-a-pr on agent/build-a-useful-feature-and-open-a-pr"
+    }
+  ],
+  "changedFiles": [],
+  "openQuestions": [],
+  "prUrl": null
+}
