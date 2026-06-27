@@ -24,4 +24,4 @@ model Job {
 }
 model MiniTask { id String @id jobId String title String detail String? status TaskStatus @default(pending) createdAt DateTime @default(now()) updatedAt DateTime @updatedAt job Job @relation(fields:[jobId], references:[id], onDelete:Cascade) }
 model WorkLog { id String @id jobId String role String content String createdAt DateTime @default(now()) job Job @relation(fields:[jobId], references:[id], onDelete:Cascade) }
-model Memory { id String @id jobId String text String embedding Unsupported("vector(768)")? createdAt DateTime @default(now()) job Job @relation(fields:[jobId], references:[id], onDelete:Cascade) }
+model Memory { id String @id jobId String text String embedding Json? createdAt DateTime @default(now()) job Job @relation(fields:[jobId], references:[id], onDelete:Cascade) }
