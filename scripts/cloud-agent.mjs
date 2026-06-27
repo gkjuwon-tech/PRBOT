@@ -1,6 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Octokit } from '@octokit/rest';
 import { nanoid } from 'nanoid';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 const apiKey = process.env.MODEL_ACCESS || process.env.GEMINI_API_KEY;
 const auth = process.env.GH_AUTH;
@@ -20,7 +22,7 @@ const [owner, repo] = repoFull.split('/');
 const gh = new Octokit({ auth });
 const genAI = new GoogleGenerativeAI(apiKey);
 const modelConfig = {
-  systemInstruction: 'You are a careful repository automation agent. Return strict JSON. If a proposed file path is rejected by validation, revise the plan and choose an allowed path. Maintain continuity from provided state and memory.',
+  systemInstruction: 'You are a careful repository automation agent. Return strict JSON. Use the provided repo snapshot directly. Do not create discovery scripts, failing tests, or workspace dump tests. Implement useful changes in normal source, docs, or passing test files.',
   generationConfig: { responseMimeType: 'application/json' }
 };
 
@@ -38,7 +40,7 @@ function modelCandidates(name) {
   return [...new Set(list)];
 }
 function extractJson(text) {
-  const cleaned = text.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+  const cleaned = String(text || '').trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
   try { return JSON.parse(cleaned); } catch {}
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
@@ -47,11 +49,22 @@ function extractJson(text) {
   }
   return null;
 }
-function pathFailure(path) {
-  if (!path || typeof path !== 'string') return 'missing path';
-  if (path.startsWith('/')) return 'absolute paths are not allowed';
-  if (path.includes('..')) return 'parent directory traversal is not allowed';
-  if (path.startsWith('.github/workflows/')) return 'reserved automation config path is not allowed here; write a normal source, test, or docs file instead';
+function pathFailure(filePath) {
+  if (!filePath || typeof filePath !== 'string') return 'missing path';
+  if (filePath.startsWith('/')) return 'absolute paths are not allowed';
+  if (filePath.includes('..')) return 'parent directory traversal is not allowed';
+  if (filePath.startsWith('.github/workflows/')) return 'reserved automation config path is not allowed here; write a normal source, test, or docs file instead';
+  if (filePath === 'discover.py' || filePath === 'test_discover.py') return 'discovery-only files are not useful product changes; use the provided repo snapshot and implement a real feature instead';
+  if (filePath.includes('discovery_report')) return 'discovery report files are not useful product changes; implement the feature directly';
+  return null;
+}
+function contentFailure(filePath, content) {
+  const text = String(content || '');
+  const lowered = text.toLowerCase();
+  if (text.includes('WORKSPACE_DUMP_START')) return 'workspace dump tests are forbidden; the runner already provides a repo snapshot';
+  if (lowered.includes('assert false') || lowered.includes('assertfalse')) return 'intentionally failing tests are forbidden; tests must pass';
+  if (lowered.includes('dump all') && lowered.includes('files') && lowered.includes('contents')) return 'dumping all repository file contents is forbidden; use the provided bounded snapshot';
+  if (filePath?.startsWith('test') && lowered.includes('raise assertionerror')) return 'intentionally failing tests are forbidden; tests must pass';
   return null;
 }
 function score(text, query) {
@@ -81,6 +94,53 @@ async function askModel(prompt) {
   throw lastError;
 }
 
+const snapshotSkipDirs = new Set(['.git', 'node_modules', 'dist', 'build', '.pytest_cache', '__pycache__', '.venv', 'venv', 'coverage']);
+const snapshotPreferred = [
+  'README.md', 'package.json', 'pnpm-workspace.yaml', 'tsconfig.json',
+  'apps/web/package.json', 'apps/web/src/main.tsx', 'apps/web/src/style.css', 'apps/web/vite.config.ts',
+  'scripts/cloud-agent.mjs', '.github/workflows/cloud-agent-phone.yml', '.github/workflows/web-gh-pages.yml'
+];
+async function exists(filePath) {
+  try { await fs.stat(filePath); return true; } catch { return false; }
+}
+async function walkRepo(dir = '.', out = []) {
+  let entries = [];
+  try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return out; }
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    const rel = full.replace(/^\.\//, '');
+    if (entry.isDirectory()) {
+      if (snapshotSkipDirs.has(entry.name) || rel.startsWith('.agent/')) continue;
+      await walkRepo(full, out);
+    } else if (entry.isFile()) {
+      if (rel.startsWith('.agent/')) continue;
+      if (/\.(png|jpg|jpeg|gif|webp|zip|gz|lock)$/i.test(rel)) continue;
+      out.push(rel);
+    }
+    if (out.length >= 80) return out;
+  }
+  return out;
+}
+async function buildRepoSnapshot() {
+  const allFiles = await walkRepo();
+  const selected = [];
+  for (const file of snapshotPreferred) if (await exists(file)) selected.push(file);
+  for (const file of allFiles) {
+    if (selected.length >= 18) break;
+    if (!selected.includes(file) && /\.(md|json|yml|yaml|ts|tsx|js|mjs|css|html|py)$/i.test(file)) selected.push(file);
+  }
+  const parts = [`File tree sample:\n${allFiles.slice(0, 80).map(f => `- ${f}`).join('\n')}`];
+  for (const file of selected) {
+    try {
+      const text = await fs.readFile(file, 'utf8');
+      parts.push(`\n--- ${file} ---\n${text.slice(0, 5000)}`);
+    } catch {}
+  }
+  return parts.join('\n').slice(0, 40000);
+}
+
+const repoSnapshot = await buildRepoSnapshot();
 const branch = `agent/${jobId}`;
 const statePath = `.agent/state/${jobId}.json`;
 const logPath = `.agent/logs/${jobId}.md`;
@@ -96,20 +156,20 @@ try {
   console.log(`Initialized new job branch: ${branch}`);
 }
 
-async function readFile(path) {
+async function readFile(filePath) {
   try {
-    const res = await gh.repos.getContent({ owner, repo, path, ref: branch });
+    const res = await gh.repos.getContent({ owner, repo, path: filePath, ref: branch });
     if (!Array.isArray(res.data)) return { text: fromB64(res.data.content), sha: res.data.sha };
   } catch {}
   return { text: '', sha: undefined };
 }
-async function writeFile(path, text, message) {
+async function writeFile(filePath, text, message) {
   let sha;
   try {
-    const existing = await gh.repos.getContent({ owner, repo, path, ref: branch });
+    const existing = await gh.repos.getContent({ owner, repo, path: filePath, ref: branch });
     if (!Array.isArray(existing.data)) sha = existing.data.sha;
   } catch {}
-  await gh.repos.createOrUpdateFileContents({ owner, repo, path, branch, message, content: b64(text), sha });
+  await gh.repos.createOrUpdateFileContents({ owner, repo, path: filePath, branch, message, content: b64(text), sha });
 }
 function freshState() {
   return {
@@ -121,9 +181,9 @@ function freshState() {
     runCount: 0,
     stepCount: 0,
     tasks: [
-      { id: nanoid(8), title: 'Understand mission and repo context', status: 'pending', notes: '' },
+      { id: nanoid(8), title: 'Understand provided repo snapshot', status: 'pending', notes: '' },
       { id: nanoid(8), title: 'Ship a small useful implementation slice', status: 'pending', notes: '' },
-      { id: nanoid(8), title: 'Record progress and create next tasks', status: 'pending', notes: '' }
+      { id: nanoid(8), title: 'Record progress and create concrete next tasks', status: 'pending', notes: '' }
     ],
     memory: [],
     changedFiles: [],
@@ -136,6 +196,16 @@ const oldState = await readFile(statePath);
 let state;
 try { state = oldState.text ? { ...freshState(), ...JSON.parse(oldState.text) } : freshState(); } catch { state = freshState(); }
 if (createdBranch && !oldState.text) state.memory.push({ at: stamp(), kind: 'init', text: `New job registered: ${jobId} on ${branch}` });
+for (const task of state.tasks) {
+  const bad = `${task.title} ${task.notes}`.toLowerCase();
+  if ((task.status === 'pending' || task.status === 'running') && (bad.includes('workspace dump') || bad.includes('discovery report') || bad.includes('test output'))) {
+    task.status = 'blocked';
+    task.notes = 'Blocked by runner policy: use provided repo snapshot directly; do not rely on failing tests or discovery dumps.';
+  }
+}
+if (!state.tasks.some(t => t.status === 'pending')) {
+  state.tasks.push({ id: nanoid(8), title: 'Implement a real feature from the provided repo snapshot', status: 'pending', notes: 'Created after blocking discovery-loop tasks.' });
+}
 state.runCount += 1;
 state.updatedAt = stamp();
 
@@ -145,7 +215,7 @@ function taskSummary() {
 function nextTask() {
   let task = state.tasks.find(t => t.status === 'pending');
   if (!task) {
-    task = { id: nanoid(8), title: 'Plan next useful step from saved state', status: 'pending', notes: 'auto-created' };
+    task = { id: nanoid(8), title: 'Plan next useful implementation step from repo snapshot', status: 'pending', notes: 'auto-created' };
     state.tasks.push(task);
   }
   return task;
@@ -163,28 +233,30 @@ async function appendLog(text) {
 }
 
 await saveState();
-await appendLog(`${createdBranch ? 'New job initialized' : 'Existing job resumed'}. Run ${state.runCount} started. jobId=${jobId}, maxSteps=${maxSteps}, model=${normalizeModelName(requestedModelName)}`);
+await appendLog(`${createdBranch ? 'New job initialized' : 'Existing job resumed'}. Run ${state.runCount} started. jobId=${jobId}, maxSteps=${maxSteps}, model=${normalizeModelName(requestedModelName)}\n\nRepo snapshot was provided directly to the model. Discovery loops and failing workspace-dump tests are blocked.`);
 
 for (let step = 0; step < maxSteps; step++) {
   const task = nextTask();
   task.status = 'running';
   state.stepCount += 1;
   const mem = retrieveMemory(`${mission} ${task.title}`).map(m => `- ${m.kind || 'note'}: ${m.text}`).join('\n') || '- none';
-  const basePrompt = `Continue this long-running repository task.\n\nMission:\n${mission}\n\nCurrent task:\n${task.id}: ${task.title}\n\nSaved tasks:\n${taskSummary()}\n\nRetrieved memory:\n${mem}\n\nChanged files so far:\n${state.changedFiles.join('\n') || '(none)'}\n\nReturn JSON:\n{\n  "summary":"short summary",\n  "files":[{"path":"relative/path.ext","content":"complete file content"}],\n  "taskUpdates":[{"id":"task id","status":"pending|running|done|blocked","notes":"note"}],\n  "newTasks":[{"title":"small next task","notes":"why"}],\n  "memories":[{"kind":"decision|finding|todo|constraint","text":"durable memory"}],\n  "openQuestions":["question"]\n}\n\nRules:\n- Keep paths relative.\n- Do not write reserved automation config paths.\n- Keep each step small.\n- Preserve continuity.\n- Prefer useful complete files.`;
+  const basePrompt = `Continue this long-running repository task.\n\nMission:\n${mission}\n\nCurrent task:\n${task.id}: ${task.title}\n\nSaved tasks:\n${taskSummary()}\n\nRetrieved memory:\n${mem}\n\nChanged files so far:\n${state.changedFiles.join('\n') || '(none)'}\n\nCurrent repo snapshot, already collected for you:\n${repoSnapshot}\n\nReturn JSON:\n{\n  "summary":"short summary",\n  "files":[{"path":"relative/path.ext","content":"complete file content"}],\n  "taskUpdates":[{"id":"task id","status":"pending|running|done|blocked","notes":"note"}],\n  "newTasks":[{"title":"small next task","notes":"why"}],\n  "memories":[{"kind":"decision|finding|todo|constraint","text":"durable memory"}],\n  "openQuestions":["question"]\n}\n\nRules:\n- Use the repo snapshot above directly.\n- Do not create discovery scripts.\n- Do not create failing tests.\n- Do not create workspace dump tests.\n- Do not defer analysis to a future test run.\n- Keep paths relative.\n- Do not write reserved automation config paths.\n- Keep each step small and concrete.\n- Prefer useful complete product/source/docs changes.\n- Tests, if created, must be intended to pass.`;
   let raw = await askModel(basePrompt);
   let plan = toPlan(raw, 'step output');
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const invalid = (Array.isArray(plan.files) ? plan.files : []).map(file => ({ path: file?.path, reason: pathFailure(file?.path) })).filter(item => item.reason);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const invalid = (Array.isArray(plan.files) ? plan.files : [])
+      .map(file => ({ path: file?.path, reason: pathFailure(file?.path) || contentFailure(file?.path, file?.content) }))
+      .filter(item => item.reason);
     if (invalid.length === 0) break;
     const feedback = invalid.map(item => `- ${item.path || '(missing path)'}: ${item.reason}`).join('\n');
-    raw = await askModel(`${basePrompt}\n\nYour previous plan failed validation.\n\nFailed paths and reasons:\n${feedback}\n\nRevise the plan. Choose allowed replacement paths. Explain the adaptation in summary. Return only JSON.`);
+    raw = await askModel(`${basePrompt}\n\nYour previous plan failed validation.\n\nFailed paths or contents and reasons:\n${feedback}\n\nRevise the plan using allowed paths and useful product changes. Return only JSON.`);
     plan = toPlan(raw, `repair output ${attempt}`);
   }
 
   const skipped = [];
   const written = [];
   for (const file of (Array.isArray(plan.files) ? plan.files : []).slice(0, 20)) {
-    const failure = pathFailure(file.path);
+    const failure = pathFailure(file.path) || contentFailure(file.path, file.content);
     if (failure) { skipped.push(`${file.path || '(missing path)'}: ${failure}`); continue; }
     try {
       await writeFile(file.path, String(file.content ?? ''), `agent: update ${file.path}`);
