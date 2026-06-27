@@ -1,0 +1,27 @@
+generator client { provider = "prisma-client-js" }
+datasource db { provider = "postgresql" url = env("DATABASE_URL") }
+
+enum JobStatus { queued running paused succeeded failed }
+enum TaskStatus { pending running done blocked failed }
+
+model Job {
+  id String @id
+  repoFullName String
+  baseBranch String @default("main")
+  branchName String?
+  mission String
+  storedCredential String
+  modelMode String @default("auto")
+  maxHours Int @default(12)
+  status JobStatus @default(queued)
+  pullRequestUrl String?
+  error String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tasks MiniTask[]
+  logs WorkLog[]
+  memories Memory[]
+}
+model MiniTask { id String @id jobId String title String detail String? status TaskStatus @default(pending) createdAt DateTime @default(now()) updatedAt DateTime @updatedAt job Job @relation(fields:[jobId], references:[id], onDelete:Cascade) }
+model WorkLog { id String @id jobId String role String content String createdAt DateTime @default(now()) job Job @relation(fields:[jobId], references:[id], onDelete:Cascade) }
+model Memory { id String @id jobId String text String embedding Unsupported("vector(768)")? createdAt DateTime @default(now()) job Job @relation(fields:[jobId], references:[id], onDelete:Cascade) }

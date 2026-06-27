@@ -1,0 +1,51 @@
+name: fullstack-build
+
+on:
+  pull_request:
+  push:
+    branches: [main, feature/hnpr-fullstack]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hn_pr_worker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hn_pr_worker?schema=public
+      REDIS_URL: redis://localhost:6379
+      GEMINI_API_KEY: ci-placeholder
+      SECRET_BOX_KEY: ci-placeholder-ci-placeholder
+      WEB_ORIGIN: http://localhost:5173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile=false
+      - run: pnpm --filter @hn-pr-worker/api db:push
+      - run: pnpm typecheck
+      - run: pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hn-pr-worker-web
+          path: apps/web/dist

@@ -1,0 +1,20 @@
+import 'dotenv/config';
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import { PrismaClient } from '@prisma/client';
+import { Queue } from 'bullmq';
+import IORedis from 'ioredis';
+import { nanoid } from 'nanoid';
+import { z } from 'zod';
+
+const prisma = new PrismaClient();
+const redis = new IORedis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: null });
+const queue = new Queue('work-jobs', { connection: redis });
+const app = Fastify({ logger: true });
+await app.register(cors, { origin: process.env.WEB_ORIGIN ?? 'http://localhost:5173' });
+const CreateJob = z.object({ repoFullName:z.string().regex(/^[^/]+\/[^/]+$/), baseBranch:z.string().default('main'), mission:z.string().min(10), modelMode:z.enum(['fast','pro','auto']).default('auto'), maxHours:z.number().int().min(1).max(336).default(12), credential:z.string().min(20) });
+app.post('/api/jobs', async (req, reply) => { const input=CreateJob.parse(req.body); const id=nanoid(); const job=await prisma.job.create({data:{id, repoFullName:input.repoFullName, baseBranch:input.baseBranch, mission:input.mission, storedCredential:input.credential, modelMode:input.modelMode, maxHours:input.maxHours}}); await queue.add('run',{jobId:id},{jobId:id,attempts:3}); reply.code(201).send(job); });
+app.get('/api/jobs', async()=> prisma.job.findMany({orderBy:{createdAt:'desc'},take:50}));
+app.get('/api/jobs/:id', async(req)=> prisma.job.findUniqueOrThrow({where:{id:(req.params as any).id},include:{tasks:true,logs:true}}));
+app.get('/health', async()=>({ok:true}));
+await app.listen({port:Number(process.env.API_PORT ?? 8787),host:'0.0.0.0'});
