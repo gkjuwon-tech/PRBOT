@@ -174,3 +174,10 @@ Tasks:
 ## 2026-06-27T23:32:04.561Z
 
 Run complete. PR: (not created)
+
+
+## 2026-06-27T23:46:06.948Z
+
+Existing job resumed. Run 2 started. jobId=Testing, maxSteps=8, model=gemini-3.5-flash
+
+Repo snapshot was provided directly to the model. Discovery loops and failing workspace-dump tests are blocked.
