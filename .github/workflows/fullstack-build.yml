@@ -5,12 +5,15 @@ on:
   push:
     branches: [main, feature/hnpr-fullstack]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: postgres:16-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -34,13 +37,14 @@ jobs:
       WEB_ORIGIN: http://localhost:5173
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+          pnpm --version
       - run: pnpm install --frozen-lockfile=false
       - run: pnpm --filter @hn-pr-worker/api db:push
       - run: pnpm typecheck
