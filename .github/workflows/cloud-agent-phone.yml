@@ -1,0 +1,51 @@
+name: cloud-agent-phone
+
+on:
+  workflow_dispatch:
+    inputs:
+      mission:
+        description: Mission for the cloud agent
+        required: true
+        type: string
+      base_branch:
+        description: Base branch
+        required: true
+        default: main
+        type: string
+      model:
+        description: Model
+        required: true
+        default: gemini-3.5-flash
+        type: choice
+        options:
+          - gemini-3.5-flash
+          - gemini-3.1-pro
+      model_access:
+        description: Paste the model access value from the app
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base_branch }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm i @google/generative-ai @octokit/rest nanoid
+      - run: node scripts/cloud-agent.mjs
+        env:
+          MODEL_ACCESS: ${{ inputs.model_access }}
+          GH_REPO: ${{ github.repository }}
+          GH_AUTH: ${{ secrets.GITHUB_TOKEN }}
+          MISSION: ${{ inputs.mission }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          MODEL: ${{ inputs.model }}
