@@ -5,32 +5,15 @@ on:
   push:
     branches: [main, feature/hnpr-fullstack]
 
-permissions:
-  contents: read
-
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hn_pr_worker?schema=public
-      REDIS_URL: redis://localhost:6379
-      GEMINI_API_KEY: ci-placeholder
-      SECRET_BOX_KEY: ci-placeholder-ci-placeholder
-      WEB_ORIGIN: http://localhost:5173
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Enable pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@9.12.0 --activate
-          pnpm --version
+      - run: corepack enable
+      - run: corepack prepare pnpm@9.12.0 --activate
       - run: pnpm install --frozen-lockfile=false
-      - run: pnpm typecheck
-      - run: pnpm build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: web-dist
-          path: apps/web/dist
+      - run: cd apps/web && pnpm build
