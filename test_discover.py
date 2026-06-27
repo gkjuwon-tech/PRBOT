@@ -1,37 +1,23 @@
 import os
 
-def test_generate_report():
-    report_path = "discovery_report.txt"
+def test_reveal_workspace():
+    workspace_files = []
+    ignored_dirs = {'.git', '__pycache__', '.pytest_cache', '.venv', 'venv'}
+    ignored_files = {'discovery_report.txt'}
     
-    # 1. Collect all files
-    all_files = []
-    for root, dirs, files in os.walk("."):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("venv", "env", "node_modules", "__pycache__", ".git", ".github", ".pytest_cache")]
+    for root, dirs, files in os.walk('.'):
+        dirs[:] = [d for d in dirs if d not in ignored_dirs]
         for file in files:
-            filepath = os.path.join(root, file)
-            all_files.append(filepath)
-            
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write("=== REPOSITORY FILE LIST ===\n")
-        for filepath in all_files:
-            f.write(f"- {filepath}\n")
-        f.write("\n" + "="*80 + "\n\n")
-        
-        f.write("=== FILE CONTENTS ===\n\n")
-        for filepath in all_files:
-            # Skip binary, very large files, or the report itself
-            if filepath.endswith((".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", "discovery_report.txt")):
+            if file in ignored_files:
                 continue
-            f.write(f"File: {filepath}\n")
-            f.write("-" * 40 + "\n")
+            full_path = os.path.join(root, file)
+            rel_path = os.path.relpath(full_path, '.')
             try:
-                with open(filepath, "r", encoding="utf-8", errors="ignore") as tf:
-                    content = tf.read(10000)
-                    f.write(content)
-                    if len(content) == 10000:
-                        f.write("\n... [TRUNCATED] ...\n")
+                with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+                workspace_files.append(f"=== FILE: {rel_path} ===\n{content}\n=========================\n")
             except Exception as e:
-                f.write(f"[Could not read file: {e}]\n")
-            f.write("\n" + "=" * 80 + "\n\n")
-            
-    print("Discovery report successfully generated at discovery_report.txt")
+                workspace_files.append(f"=== FILE: {rel_path} ===\nError reading file: {e}\n=========================\n")
+                
+    separator = "\n" + "#" * 40 + "\n"
+    assert False, separator.join(workspace_files)
