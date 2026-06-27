@@ -19,7 +19,7 @@ const gh = new Octokit({ auth });
 const genAI = new GoogleGenerativeAI(apiKey);
 const model = genAI.getGenerativeModel({
   model: modelName,
-  systemInstruction: 'Return useful repository changes. Prefer strict JSON, but useful text is acceptable. Do not create files under .github/workflows.',
+  systemInstruction: 'You are a careful repository automation agent. Return strict JSON. If a proposed file path is rejected by validation, revise the plan and choose an allowed path.',
   generationConfig: { responseMimeType: 'application/json' }
 });
 
@@ -34,36 +34,56 @@ function extractJson(text) {
   return null;
 }
 
-function safePath(path) {
-  return path && typeof path === 'string' && !path.startsWith('/') && !path.includes('..') && !path.startsWith('.github/workflows/');
+function pathFailure(path) {
+  if (!path || typeof path !== 'string') return 'missing path';
+  if (path.startsWith('/')) return 'absolute paths are not allowed';
+  if (path.includes('..')) return 'parent directory traversal is not allowed';
+  if (path.startsWith('.github/workflows/')) return 'reserved automation config path is not allowed here; write a normal source, test, or docs file instead';
+  return null;
+}
+
+function toPlan(text, label) {
+  return extractJson(text) ?? {
+    summary: `${label}: captured non-JSON model output as a note.`,
+    files: [{ path: `agent-output/${Date.now()}-plan.md`, content: `# Agent output\n\nMission:\n\n${mission}\n\n## Model response\n\n${text}\n` }]
+  };
+}
+
+async function askModel(prompt) {
+  const response = await model.generateContent(prompt);
+  return response.response.text();
 }
 
 const branch = `cloud-agent/${Date.now()}-${nanoid(5)}`;
 const baseRef = await gh.git.getRef({ owner, repo, ref: `heads/${baseBranch}` });
 await gh.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: baseRef.data.object.sha });
 
-const prompt = `Create a focused implementation for this repository mission.\n\nMission:\n${mission}\n\nReturn JSON with this exact shape if possible:\n{\n  "summary": "short summary",\n  "files": [\n    {"path":"relative/path.ext", "content":"complete file content"}\n  ]\n}\n\nRules:\n- Keep paths relative.\n- Do not write credentials.\n- Do not create files under .github/workflows.\n- Include practical code, README notes, and tests when useful.\n- Prefer small but complete files.`;
+const basePrompt = `Create a focused implementation for this repository mission.\n\nMission:\n${mission}\n\nReturn JSON with this exact shape:\n{\n  "summary": "short summary",\n  "files": [\n    {"path":"relative/path.ext", "content":"complete file content"}\n  ]\n}\n\nRules:\n- Keep paths relative.\n- Do not write credentials.\n- Do not write reserved automation config paths.\n- If an automation config would be useful, write docs/proposed-automation.md instead.\n- Include practical code, README notes, and tests when useful.\n- Prefer small but complete files.`;
 
-const response = await model.generateContent(prompt);
-const raw = response.response.text();
-const plan = extractJson(raw) ?? {
-  summary: 'The model returned prose instead of JSON, so the response was captured as a draft implementation note.',
-  files: [{
-    path: `agent-output/${Date.now()}-plan.md`,
-    content: `# Agent output\n\nMission:\n\n${mission}\n\n## Model response\n\n${raw}\n`
-  }]
-};
+let raw = await askModel(basePrompt);
+let plan = toPlan(raw, 'initial output');
+
+for (let attempt = 1; attempt <= 2; attempt++) {
+  const invalid = (Array.isArray(plan.files) ? plan.files : [])
+    .map(file => ({ path: file?.path, reason: pathFailure(file?.path) }))
+    .filter(item => item.reason);
+
+  if (invalid.length === 0) break;
+
+  const feedback = invalid.map(item => `- ${item.path || '(missing path)'}: ${item.reason}`).join('\n');
+  raw = await askModel(`${basePrompt}\n\nYour previous plan failed validation.\n\nFailed paths and reasons:\n${feedback}\n\nRevise the plan. Choose allowed replacement paths. Explain the adaptation in summary. Return only JSON.`);
+  plan = toPlan(raw, `repair output ${attempt}`);
+}
 
 const files = Array.isArray(plan.files) ? plan.files : [];
-if (files.length === 0) {
-  files.push({ path: `agent-output/${Date.now()}-empty.md`, content: `# Empty agent output\n\nMission:\n\n${mission}\n` });
-}
+if (files.length === 0) files.push({ path: `agent-output/${Date.now()}-empty.md`, content: `# Empty agent output\n\nMission:\n\n${mission}\n` });
 
 const skipped = [];
 let written = 0;
 for (const file of files.slice(0, 30)) {
-  if (!safePath(file.path)) {
-    skipped.push(file.path || '(missing path)');
+  const failure = pathFailure(file.path);
+  if (failure) {
+    skipped.push(`${file.path || '(missing path)'}: ${failure}`);
     continue;
   }
   const content = String(file.content ?? '');
@@ -84,7 +104,7 @@ for (const file of files.slice(0, 30)) {
     });
     written += 1;
   } catch (error) {
-    skipped.push(`${file.path}: ${error.message}`);
+    skipped.push(`${file.path}: write failed: ${error.message}`);
   }
 }
 
@@ -95,7 +115,7 @@ if (skipped.length > 0) {
     path: `agent-output/${Date.now()}-skipped.md`,
     branch,
     message: 'cloud-agent: record skipped files',
-    content: Buffer.from(`# Skipped files\n\n${skipped.map(item => `- ${item}`).join('\n')}\n`).toString('base64')
+    content: Buffer.from(`# Skipped files\n\nThese failures were fed back to the model before the final write attempt.\n\n${skipped.map(item => `- ${item}`).join('\n')}\n`).toString('base64')
   });
 }
 
