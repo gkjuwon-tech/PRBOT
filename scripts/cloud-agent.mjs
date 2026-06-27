@@ -1,7 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Octokit } from '@octokit/rest';
 import { nanoid } from 'nanoid';
-import fs from 'node:fs/promises';
 
 const apiKey = process.env.MODEL_ACCESS || process.env.GEMINI_API_KEY;
 const auth = process.env.GH_AUTH;
@@ -20,31 +19,48 @@ const gh = new Octokit({ auth });
 const genAI = new GoogleGenerativeAI(apiKey);
 const model = genAI.getGenerativeModel({
   model: modelName,
-  systemInstruction: 'You are a careful senior engineer. Return strict JSON only. Generate useful repository files for the requested product. Do not include secrets.',
+  systemInstruction: 'Return useful repository changes. Prefer strict JSON, but useful text is acceptable.',
   generationConfig: { responseMimeType: 'application/json' }
 });
+
+function extractJson(text) {
+  const cleaned = text.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+  try { return JSON.parse(cleaned); } catch {}
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(cleaned.slice(start, end + 1)); } catch {}
+  }
+  return null;
+}
+
+function safePath(path) {
+  return path && typeof path === 'string' && !path.startsWith('/') && !path.includes('..');
+}
 
 const branch = `cloud-agent/${Date.now()}-${nanoid(5)}`;
 const baseRef = await gh.git.getRef({ owner, repo, ref: `heads/${baseBranch}` });
 await gh.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: baseRef.data.object.sha });
 
-const prompt = `Create a focused implementation for this repository mission.\n\nMission:\n${mission}\n\nReturn JSON with this exact shape:\n{\n  "summary": "short summary",\n  "files": [\n    {"path":"relative/path.ext", "content":"complete file content"}\n  ]\n}\n\nRules:\n- Keep paths relative.\n- Do not write credentials.\n- Include practical code, README notes, and tests or workflow files when useful.\n- Prefer small but complete files.`;
+const prompt = `Create a focused implementation for this repository mission.\n\nMission:\n${mission}\n\nReturn JSON with this exact shape if possible:\n{\n  "summary": "short summary",\n  "files": [\n    {"path":"relative/path.ext", "content":"complete file content"}\n  ]\n}\n\nRules:\n- Keep paths relative.\n- Do not write credentials.\n- Include practical code, README notes, and tests or workflow files when useful.\n- Prefer small but complete files.`;
 
 const response = await model.generateContent(prompt);
-let plan;
-try {
-  plan = JSON.parse(response.response.text());
-} catch (error) {
-  await fs.writeFile('agent-raw-output.txt', response.response.text());
-  throw new Error('Model did not return valid JSON. Raw output saved as artifact candidate.');
-}
+const raw = response.response.text();
+const plan = extractJson(raw) ?? {
+  summary: 'The model returned prose instead of JSON, so the response was captured as a draft implementation note.',
+  files: [{
+    path: `agent-output/${Date.now()}-plan.md`,
+    content: `# Agent output\n\nMission:\n\n${mission}\n\n## Model response\n\n${raw}\n`
+  }]
+};
 
 const files = Array.isArray(plan.files) ? plan.files : [];
-if (files.length === 0) throw new Error('Model returned no files');
+if (files.length === 0) {
+  files.push({ path: `agent-output/${Date.now()}-empty.md`, content: `# Empty agent output\n\nMission:\n\n${mission}\n` });
+}
 
 for (const file of files.slice(0, 30)) {
-  if (!file.path || typeof file.path !== 'string') continue;
-  if (file.path.startsWith('/') || file.path.includes('..')) continue;
+  if (!safePath(file.path)) continue;
   const content = String(file.content ?? '');
   let sha;
   try {
