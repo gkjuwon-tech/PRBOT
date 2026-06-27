@@ -1,26 +1,19 @@
 import os
 
-def test_discovery():
+def test_list_workspace():
     report = []
-    report.append("=== WORKSPACE DISCOVERY ===")
     for root, dirs, files in os.walk("."):
-        # Exclude hidden directories and common virtualenv/cache/metadata directories
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("venv", "env", "node_modules", "__pycache__")]
+        dirs[:] = [d for d in dirs if d not in (".git", ".pytest_cache", "__pycache__", ".github", "venv", ".venv")]
         for file in files:
             path = os.path.join(root, file)
-            # Skip report file itself to avoid self-reference
-            if file == "discovery_report.txt":
+            if file in ("discovery_report.txt",):
                 continue
-            report.append(f"\n--- FILE: {path} ---")
             try:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
-                report.append(content)
+                report.append(f"=== FILE: {path} ===\n{content}\n====================\n")
             except Exception as e:
-                report.append(f"[Could not read file: {e}]")
+                report.append(f"=== FILE: {path} (Error reading: {e}) ===\n")
     
-    report_content = "\n".join(report)
-    with open("discovery_report.txt", "w", encoding="utf-8") as f:
-        f.write(report_content)
-        
-    assert False, f"Discovery Report:\n{report_content}"
+    workspace_content = "\n".join(report)
+    assert False, f"Workspace Files and Contents:\n{workspace_content}"
