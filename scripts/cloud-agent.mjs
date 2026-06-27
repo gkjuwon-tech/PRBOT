@@ -3,14 +3,14 @@ import { Octokit } from '@octokit/rest';
 import { nanoid } from 'nanoid';
 import fs from 'node:fs/promises';
 
-const apiKey = process.env.GEMINI_API_KEY;
+const apiKey = process.env.MODEL_ACCESS || process.env.GEMINI_API_KEY;
 const auth = process.env.GH_AUTH;
 const repoFull = process.env.GH_REPO;
 const mission = process.env.MISSION;
 const baseBranch = process.env.BASE_BRANCH || 'main';
 const modelName = process.env.MODEL || 'gemini-3.5-flash';
 
-if (!apiKey) throw new Error('Missing GEMINI_API_KEY secret');
+if (!apiKey) throw new Error('Missing model access value');
 if (!auth) throw new Error('Missing GitHub workflow token');
 if (!repoFull) throw new Error('Missing repository name');
 if (!mission) throw new Error('Missing mission');
