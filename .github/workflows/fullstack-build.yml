@@ -11,24 +11,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: hn_pr_worker
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hn_pr_worker?schema=public
       REDIS_URL: redis://localhost:6379
@@ -46,10 +28,9 @@ jobs:
           corepack prepare pnpm@9.12.0 --activate
           pnpm --version
       - run: pnpm install --frozen-lockfile=false
-      - run: pnpm --filter @hn-pr-worker/api db:push
       - run: pnpm typecheck
       - run: pnpm build
       - uses: actions/upload-artifact@v4
         with:
-          name: hn-pr-worker-web
+          name: web-dist
           path: apps/web/dist
