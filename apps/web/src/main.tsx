@@ -8,6 +8,8 @@ type FormState = {
   repo: string;
   branch: string;
   model: string;
+  jobId: string;
+  maxSteps: string;
   mission: string;
 };
 
@@ -18,6 +20,11 @@ function parseRepo(value: string) {
   return { owner, repo };
 }
 
+function makeJobId(value: string) {
+  const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+  return slug || `job-${Date.now()}`;
+}
+
 function App() {
   const [form, setForm] = useState<FormState>({
     token: '',
@@ -25,6 +32,8 @@ function App() {
     repo: 'gkjuwon-tech/PRBOT',
     branch: 'main',
     model: 'gemini-3.5-flash',
+    jobId: '',
+    maxSteps: '3',
     mission: 'Build a useful feature and open a PR.'
   });
   const [busy, setBusy] = useState(false);
@@ -36,6 +45,7 @@ function App() {
     setMessage('calling GitHub Actions... little orange goblin is putting on boots.');
     try {
       const { owner, repo } = parseRepo(form.repo);
+      const jobId = form.jobId.trim() || makeJobId(form.mission);
       const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/workflows/cloud-agent-phone.yml/dispatches`, {
         method: 'POST',
         headers: {
@@ -50,12 +60,14 @@ function App() {
             mission: form.mission,
             base_branch: form.branch,
             model: form.model,
-            model_access: form.modelAccess
+            model_access: form.modelAccess,
+            job_id: jobId,
+            max_steps: form.maxSteps
           }
         })
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      setMessage(`workflow started. open https://github.com/${owner}/${repo}/actions/workflows/cloud-agent-phone.yml`);
+      setMessage(`workflow started for ${jobId}. Use the same Job ID to continue. Open https://github.com/${owner}/${repo}/actions/workflows/cloud-agent-phone.yml`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -65,31 +77,33 @@ function App() {
 
   return (
     <main>
-      <header><b>HN Cloud PR Agent</b><span>new | run | workflows | prs | complain loudly</span></header>
+      <header><b>HN Cloud PR Agent</b><span>new | run | continue | memory | prs</span></header>
       <section className="layout">
         <aside>
           <h1>Run from phone</h1>
-          <p>This is the app. No laptop. No local server. Your phone is the remote control, GitHub Actions is the worker goblin.</p>
+          <p>This is the app. No laptop. Use the same Job ID to continue a long repo task across multiple runs.</p>
           <form onSubmit={submit}>
             <label>GitHub token<input type="password" value={form.token} onChange={e => setForm({ ...form, token: e.target.value })} placeholder="fine-grained token with Actions: write" /></label>
             <label>Gemini API key<input type="password" value={form.modelAccess} onChange={e => setForm({ ...form, modelAccess: e.target.value })} placeholder="paste Gemini API key" /></label>
             <label>Repo<input value={form.repo} onChange={e => setForm({ ...form, repo: e.target.value })} /></label>
             <label>Base branch<input value={form.branch} onChange={e => setForm({ ...form, branch: e.target.value })} /></label>
+            <label>Job ID<input value={form.jobId} onChange={e => setForm({ ...form, jobId: e.target.value })} placeholder="same id = continue same task" /></label>
+            <label>Steps this run<input value={form.maxSteps} onChange={e => setForm({ ...form, maxSteps: e.target.value })} placeholder="3" /></label>
             <label>Gemini model<select value={form.model} onChange={e => setForm({ ...form, model: e.target.value })}><option>gemini-3.5-flash</option><option>gemini-3.1-pro</option></select></label>
             <label>Mission<textarea value={form.mission} onChange={e => setForm({ ...form, mission: e.target.value })} /></label>
-            <button disabled={busy || !form.token || !form.modelAccess || !form.mission}>{busy ? 'summoning...' : 'run cloud agent'}</button>
+            <button disabled={busy || !form.token || !form.modelAccess || !form.mission}>{busy ? 'summoning...' : 'run / continue agent'}</button>
           </form>
         </aside>
         <section>
           <h1>Status</h1>
           <article className="panel"><p>{message}</p></article>
           <article className="panel">
-            <h2>What this UI does</h2>
+            <h2>Long task mode</h2>
             <ol>
               <li>Calls GitHub's workflow dispatch API directly from your browser.</li>
               <li>Starts <code>cloud-agent-phone.yml</code> in GitHub Actions.</li>
-              <li>The workflow calls Gemini in the cloud using the key you typed.</li>
-              <li>The workflow creates a branch, commits files, and opens a PR.</li>
+              <li>The workflow uses Job ID and Steps this run to continue a saved task.</li>
+              <li>The agent records state, logs, tasks, and memory in the repo branch.</li>
             </ol>
             <p>The keys go from this page to GitHub's API. There is no separate app server.</p>
           </article>
